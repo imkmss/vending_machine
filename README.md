@@ -262,7 +262,7 @@ Server1  ◀──── Raw Socket (사용자 정의 프로토콜) ────
 │  VER  │  TYPE │  PAYLOAD_LEN  │        TIMESTAMP         │
 │ 1byte │ 1byte │    2bytes     │         4bytes           │
 ├───────┴───────┴───────────────┼──────────────────────────┤
-│          CLIENT_ID            │         CHECKSUM         │
+│          CLIENT_ID            │         CHECKSUM         │s
 │           2bytes              │          2bytes          │
 └───────────────────────────────┴──────────────────────────┘
 │                    PAYLOAD (JSON, 가변)                   │
