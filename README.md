@@ -1,13 +1,81 @@
 # 자판기 관리 프로그램
 
+## 개발 진행 현황
+
+| 단계 | 내용 | 상태 |
+|------|------|------|
+| 1단계 | 자료구조 구현 (Linked List, Stack, Queue, BST, Sort/Search) | ✅ 완료 |
+| 2단계 | 클라이언트 로직 + UI (거래 세션, TCP 소켓, CSV, PyQt5 화면) | ✅ 완료 |
+| 3단계 | TCP 서버 (데이터 수신, BST 저장, 저재고 알림, COMMAND 전송) | ⬜ 미구현 |
+| 4단계 | 서버 간 동기화 (Raw Socket, SYNC/SYNC_ACK) | ⬜ 미구현 |
+| 5단계 | 웹 인터페이스 (Flask + Chart.js) | ⬜ 미구현 |
+
+---
+
+## 실행 방법
+
+```bash
+# 자판기 화면만
+python3 main.py VM_01
+
+# 관리자 화면만
+python3 main.py VM_01 --admin
+
+# 두 창 모두
+python3 main.py VM_01 --all
+```
+
+VM_ID: `VM_01` / `VM_02` / `VM_03` (생략 시 기본값 VM_01)
+
+---
+
 ## 프로젝트 구조
 
 ```
 vending_machine/
 ├── README.md
-├── server/
+├── main.py                        ← 진입점 (실행 모드 분기)
+├── server/                        ← 3단계 이후 구현 예정
 └── client/
+    ├── core/
+    │   ├── beverage.py            ← Linked List 음료 재고 관리
+    │   ├── coin_manager.py        ← ctypes CoinSlot, Stack 거스름돈
+    │   ├── transaction.py         ← VendingSession, SendQueue(Queue)
+    │   ├── sales_tree.py          ← SalesBST (BST 매출 로그)
+    │   └── sort_search.py         ← 선택/퀵 정렬, 선형/이진 탐색
+    ├── data/
+    │   ├── file_manager.py        ← CSV 로컬 백업 & 복원
+    │   └── sales_log.csv          ← 판매 로그 (자동 생성)
+    ├── images/                    ← 음료 버튼 이미지 ({음료명}.png/jpg)
+    ├── network/
+    │   └── client_socket.py       ← TCP 소켓 송신 스레드, Heartbeat
+    └── ui/
+        ├── sales_window.py        ← 고객용 자판기 화면 (PyQt5)
+        └── admin_window.py        ← 관리자 화면 (PyQt5)
 ```
+
+---
+
+## 자판기 UI 구조 (sales_window.py)
+
+```
+QMainWindow (450×595)
+└── QWidget central (배경 #ECEFF1)
+    └── QVBoxLayout
+        ├── [stretch=5] drink_frame — 음료 버튼 3×3 그리드
+        │   ├── DrinkButton × 8 (음료명 이미지 + 이름 + 가격)
+        │   └── 더미 슬롯 × 1 (image.png, 배경 #D9D9D9)
+        ├── [stretch=2] coin_widget — 화폐 투입 영역
+        │   ├── 화폐 버튼 × 5 (10/50/100/500/1,000원, #FF8D28)
+        │   └── [반환 버튼 65%] + [투입 금액 표시 35%]
+        └── [고정 80px] change_widget — 안내 메시지 + 거스름돈 출력
+```
+
+**DrinkButton 동작:**
+- 기본 상태: 배경 `#2C2C2C`
+- 구매 가능: 배경 `#FFFFFF`, 글씨 `#22FF33`
+- 품절: 배경 `#3A3A3A`, 글씨 `#666`
+- 이미지: `client/images/{음료명}` 자동 로딩, resizeEvent로 동적 스케일링
 
 ---
 
