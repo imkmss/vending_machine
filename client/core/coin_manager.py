@@ -51,8 +51,10 @@ class ChangeStack:
 
 # ------------------------------------------------------------------
 # 공개 함수
+# ctypes 포인터는 Pylance 타입 시스템과 호환되지 않으므로
+# coin 파라미터 어노테이션 생략 (ctypes 관행)
 # ------------------------------------------------------------------
-def init_coin() -> ctypes.POINTER(CoinSlot):
+def init_coin():
     """CoinSlot을 ctypes로 동적 할당하고 0 초기화 후 포인터 반환."""
     ptr = ctypes.cast(
         ctypes.create_string_buffer(ctypes.sizeof(CoinSlot)),
@@ -65,7 +67,7 @@ def init_coin() -> ctypes.POINTER(CoinSlot):
     return ptr
 
 
-def insert_coin(coin: ctypes.POINTER(CoinSlot), amount: int) -> int:
+def insert_coin(coin, amount: int) -> int:
     """
     화폐 투입 처리.
     반환값: OK(0) / INVALID_UNIT(1) / BILL_LIMIT(2) / TOTAL_LIMIT(3)
@@ -91,10 +93,11 @@ def insert_coin(coin: ctypes.POINTER(CoinSlot), amount: int) -> int:
 def calc_change(remain: int) -> ChangeStack:
     """
     잔액(remain)을 큰 단위부터 그리디로 나눠 ChangeStack에 push.
-    Stack에서 pop하면 큰 단위부터 꺼낼 수 있도록 작은 단위를 먼저 push.
+    pop하면 큰 단위부터 나온다.
+    음료 구매 후 거스름돈 계산에 사용.
     """
     stack = ChangeStack()
-    for unit in CHANGE_UNITS:   # 500 → 100 → 50 → 10 순으로 push (pop하면 큰 단위부터)
+    for unit in CHANGE_UNITS:   # 500 → 100 → 50 → 10 순으로 push
         count = remain // unit
         remain %= unit
         if count > 0:
@@ -102,6 +105,20 @@ def calc_change(remain: int) -> ChangeStack:
     return stack
 
 
-def release_coin(coin: ctypes.POINTER(CoinSlot)) -> None:
-    """CoinSlot 메모리를 해제하고 None을 반환 (호출 측에서 변수에 None 대입)."""
+def get_inserted_coins(coin) -> ChangeStack:
+    """
+    사용자가 실제로 투입한 화폐를 단위별 개수 그대로 ChangeStack에 담아 반환.
+    반환 버튼 시 사용 — 그리디 분해 없이 slot[] 값을 그대로 읽는다.
+    push 순서: 10 → 50 → 100 → 500 → 1000 (pop하면 큰 단위부터 나옴)
+    """
+    stack = ChangeStack()
+    for i, unit in enumerate(VALID_UNITS):   # 0→10, 1→50, 2→100, 3→500, 4→1000
+        count = coin.contents.slot[i]
+        if count > 0:
+            stack.push(unit, count)
+    return stack
+
+
+def release_coin(coin) -> None:
+    """CoinSlot 메모리를 해제한다 (호출 측에서 변수에 None 대입)."""
     del coin

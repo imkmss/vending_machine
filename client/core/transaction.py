@@ -9,7 +9,7 @@ import time
 from client.core.beverage import DrinkNode, Inventory
 from client.core.coin_manager import (
     CoinSlot, ChangeStack,
-    init_coin, insert_coin, calc_change, release_coin,
+    init_coin, insert_coin, calc_change, get_inserted_coins, release_coin,
     OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT,
 )
 
@@ -144,10 +144,10 @@ class VendingSession:
 
     # ── 반환 버튼 ──────────────────────────────
     def refund(self) -> ChangeStack | None:
-        """투입 금액 전액 반환. CoinSlot 해제."""
+        """투입된 화폐를 넣은 단위 그대로 반환. CoinSlot 해제."""
         if self._coin is None or self.total == 0:
             return None
-        change_stack = calc_change(self.total)
+        change_stack = get_inserted_coins(self._coin)
         release_coin(self._coin)
         self._coin = None
         return change_stack
