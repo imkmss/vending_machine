@@ -2,3 +2,4 @@ node_modules/
 .env
 .DS_Store
 *.log
+client/data/sales_log.csv
