@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (
     QGridLayout, QLabel, QPushButton, QTextEdit, QFrame,
     QSizePolicy,
 )
+import threading
+
 from PyQt5.QtCore import Qt, QRect, QRectF, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPixmap, QPainter, QPainterPath
 
@@ -157,7 +159,10 @@ class DrinkButton(QFrame):
 class SalesWindow(QMainWindow):
     """고객용 자판기 화면 — 3:4 비율 (600×800)."""
 
-    def __init__(self, client_id: str = "VM_01"):
+    _command_signal = pyqtSignal(object)  # 백그라운드 스레드 → 메인 스레드 안전 전달
+
+    def __init__(self, client_id: str = "VM_01",
+                 server_host: str = "127.0.0.1", server_port: int = 9999):
         super().__init__()
         self.client_id = client_id
         self.setWindowTitle(f"자판기 — {client_id}")
@@ -172,6 +177,30 @@ class SalesWindow(QMainWindow):
 
         self._init_ui()
         self._refresh_drinks()
+
+        # TCP 클라이언트 — 백그라운드 데몬 스레드로 시작
+        self._command_signal.connect(self._on_command)
+        self._start_tcp_client(server_host, server_port)
+
+    def _start_tcp_client(self, host: str, port: int):
+        from client.network.client_socket import VendingClient
+        self._tcp = VendingClient(
+            client_id=self.client_id,
+            server_host=host,
+            server_port=port,
+            send_queue=self.send_queue,
+            on_command=lambda payload: self._command_signal.emit(payload),
+        )
+        threading.Thread(target=self._tcp.start, daemon=True, name="tcp").start()
+
+    def _on_command(self, payload: dict):
+        """서버 COMMAND 수신 처리 (메인 스레드에서 실행)."""
+        if payload.get("action") == "low_stock":
+            name  = payload.get("name", "")
+            stock = payload.get("stock", 0)
+            prev  = self._txt_change.toPlainText().strip()
+            msg   = f"[재고 부족] {name}: {stock}개 남음"
+            self._txt_change.setPlainText(f"{prev}\n{msg}" if prev else msg)
 
     # ── UI 구성 ───────────────────────────────
     def _init_ui(self):
