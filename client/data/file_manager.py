@@ -4,8 +4,11 @@ import csv
 import os
 from datetime import date
 
-DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "sales_log.csv")
-FIELDNAMES   = ["date", "client_id", "drink_id", "drink_name", "price", "daily_sales"]
+DEFAULT_PATH    = os.path.join(os.path.dirname(__file__), "sales_log.csv")
+FIELDNAMES      = ["date", "client_id", "drink_id", "drink_name", "price", "daily_sales"]
+
+RESTOCK_PATH    = os.path.join(os.path.dirname(__file__), "restock_log.csv")
+RESTOCK_FIELDS  = ["date", "client_id", "drink_id", "drink_name", "amount"]
 
 
 def _ensure_header(path: str):
@@ -46,6 +49,32 @@ def load_sales(path: str = DEFAULT_PATH) -> list[dict]:
     with open(path, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         return list(reader)
+
+
+def append_restock(
+    date_str:   str,
+    client_id:  str,
+    drink_id:   int,
+    drink_name: str,
+    amount:     int,
+    path:       str = RESTOCK_PATH,
+):
+    """재고 보충 이벤트를 CSV에 기록."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=RESTOCK_FIELDS).writeheader()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=RESTOCK_FIELDS).writerow({
+            "date": date_str, "client_id": client_id,
+            "drink_id": drink_id, "drink_name": drink_name, "amount": amount,
+        })
+
+
+def load_restocks(path: str = RESTOCK_PATH) -> list[dict]:
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
 def get_daily_total(client_id: str, date_str: str, path: str = DEFAULT_PATH) -> int:
