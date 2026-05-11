@@ -13,7 +13,15 @@ import sys
 from PyQt5.QtWidgets import QApplication
 
 from client.ui.sales_window import SalesWindow
-from client.ui.admin_window import AdminWindow
+from client.ui.admin_window import AdminWindow, PasswordDialog
+from client.data.auth_manager import initialize_default
+
+
+def _require_password() -> bool:
+    """비밀번호 다이얼로그를 띄우고 인증 성공 여부를 반환."""
+    initialize_default()
+    dlg = PasswordDialog()
+    return dlg.exec_() == PasswordDialog.Accepted
 
 
 def main():
@@ -53,6 +61,8 @@ def main():
                             server_host=server_host, server_port=server_port)
         sales.show()
     elif mode == "admin":
+        if not _require_password():
+            sys.exit(0)
         from client.core.beverage import Inventory
         inventory = Inventory()
         admin = AdminWindow(inventory=inventory, client_id=client_id)
@@ -61,6 +71,8 @@ def main():
         sales = SalesWindow(client_id=client_id,
                             server_host=server_host, server_port=server_port)
         sales.show()
+        if not _require_password():
+            sys.exit(0)
         admin = AdminWindow(inventory=sales.inventory, client_id=client_id)
         admin.show()
 
