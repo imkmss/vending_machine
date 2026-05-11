@@ -7,10 +7,11 @@ from PyQt5.QtWidgets import (
     QGridLayout, QLabel, QPushButton, QTextEdit, QFrame,
     QSizePolicy,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QPixmap
+from PyQt5.QtCore import Qt, QRect, QRectF, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QPixmap, QPainter, QPainterPath
 
 _IMAGES_DIR = Path(__file__).parent.parent / "images"
+
 
 def _load_pixmap(name: str) -> QPixmap | None:
     for ext in ("png", "jpg", "jpeg"):
@@ -37,6 +38,8 @@ COIN_UNITS = [10, 50, 100, 500, 1000]
 class DrinkButton(QFrame):
     clicked = pyqtSignal(int)
 
+    _PRICE_H     = 26
+    _RADIUS      = 6.0
     _BG_NORMAL   = "#2C2C2C"
     _BG_DISABLED = "#3A3A3A"
     _BG_PRICE    = "#1A1A1A"
@@ -48,62 +51,79 @@ class DrinkButton(QFrame):
         self._name         = name
         self._price        = price
         self._enabled_flag = True
+        self._pixmap       = _load_pixmap(name)
+        self._scaled       = None
+
+        self._bg_color   = self._BG_NORMAL
+        self._name_color = "white"
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(f"QFrame {{ background:{self._BG_NORMAL}; border-radius:6px; }}")
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # 이미지 영역
-        self._img_label = QLabel()
-        self._img_label.setAlignment(Qt.AlignCenter)
-        self._img_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._img_label.setStyleSheet("background:transparent;")
-        self._pixmap = _load_pixmap(name)
-        if not self._pixmap:
-            self._img_label.setStyleSheet(f"background:{self._BG_IMG}; border-radius:4px;")
-        outer.addWidget(self._img_label, stretch=1)
-
-        # 하단 바: 이름(좌) + 가격(우)
-        price_bar = QWidget()
-        price_bar.setFixedHeight(26)
-        price_bar.setStyleSheet(
-            f"background:{self._BG_PRICE};"
-            "border-bottom-left-radius:6px; border-bottom-right-radius:6px;"
-        )
-        bar_layout = QHBoxLayout(price_bar)
-        bar_layout.setContentsMargins(6, 0, 6, 0)
-        bar_layout.setSpacing(4)
-
-        self._lbl_name = QLabel(name)
-        self._lbl_name.setStyleSheet(
-            "color:white; font-size:11px; font-weight:bold; background:transparent;"
-        )
-        self._lbl_name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        self._lbl_price = QLabel(f"{price:,}")
-        self._lbl_price.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._lbl_price.setStyleSheet(
-            "color:#FFD54F; font-size:11px; background:transparent;"
-        )
-        self._lbl_price.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
-
-        bar_layout.addWidget(self._lbl_name)
-        bar_layout.addWidget(self._lbl_price)
-        outer.addWidget(price_bar)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._pixmap and not self._pixmap.isNull():
-            size = self._img_label.size()
-            if size.width() > 0 and size.height() > 0:
-                scaled = self._pixmap.scaled(
-                    size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-                )
-                self._img_label.setPixmap(scaled)
+        img_w = self.width()
+        img_h = self.height() - self._PRICE_H
+        if self._pixmap and not self._pixmap.isNull() and img_w > 0 and img_h > 0:
+            self._scaled = self._pixmap.scaled(
+                img_w, img_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+        else:
+            self._scaled = None
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self._RADIUS, self._RADIUS)
+        painter.setClipPath(path)
+
+        w, h = self.width(), self.height()
+        img_h = h - self._PRICE_H
+
+        # 배경 (모서리 틈새에 표시)
+        painter.fillPath(path, QColor(self._bg_color))
+
+        # 이미지 (center-crop)
+        if self._scaled and not self._scaled.isNull():
+            sx = (self._scaled.width() - w) // 2
+            sy = (self._scaled.height() - img_h) // 2
+            painter.drawPixmap(
+                QRect(0, 0, w, img_h),
+                self._scaled,
+                QRect(sx, sy, w, img_h),
+            )
+        else:
+            painter.fillRect(QRect(0, 0, w, img_h), QColor(self._BG_IMG))
+
+        # 가격 바
+        painter.fillRect(QRect(0, img_h, w, self._PRICE_H), QColor(self._BG_PRICE))
+
+        # 이름 텍스트
+        font = QFont()
+        font.setPixelSize(11)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(self._name_color))
+        painter.drawText(
+            QRect(6, img_h, w - 60, self._PRICE_H),
+            Qt.AlignVCenter | Qt.AlignLeft,
+            self._name,
+        )
+
+        # 가격 텍스트
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(QColor("#FFD54F"))
+        painter.drawText(
+            QRect(w - 58, img_h, 52, self._PRICE_H),
+            Qt.AlignVCenter | Qt.AlignRight,
+            f"{self._price:,}",
+        )
+
+        painter.end()
 
     def mousePressEvent(self, event):
         if self._enabled_flag and event.button() == Qt.LeftButton:
@@ -112,31 +132,26 @@ class DrinkButton(QFrame):
     def set_active(self, name: str, purchasable: bool = False):
         self._enabled_flag = True
         self.setCursor(Qt.PointingHandCursor)
-        bg = "#FFFFFF" if purchasable else self._BG_NORMAL
-        self.setStyleSheet(f"QFrame {{ background:{bg}; border-radius:6px; }}")
-        self._lbl_name.setText(name)
-        color = "#22FF33" if purchasable else "white"
-        self._lbl_name.setStyleSheet(
-            f"color:{color}; font-size:11px; font-weight:bold; background:transparent;"
-        )
+        self._bg_color   = "#FFFFFF" if purchasable else self._BG_NORMAL
+        self._name       = name
+        self._name_color = "#22FF33" if purchasable else "white"
+        self.update()
 
     def set_disabled_style(self, name: str):
         self._enabled_flag = False
         self.setCursor(Qt.ArrowCursor)
-        self.setStyleSheet(f"QFrame {{ background:{self._BG_DISABLED}; border-radius:6px; }}")
-        self._lbl_name.setText(name)
-        self._lbl_name.setStyleSheet(
-            "color:#666; font-size:11px; font-weight:bold; background:transparent;"
-        )
+        self._bg_color   = self._BG_DISABLED
+        self._name       = name
+        self._name_color = "#666666"
+        self.update()
 
     def set_soldout(self, name: str):
         self._enabled_flag = False
         self.setCursor(Qt.ArrowCursor)
-        self.setStyleSheet(f"QFrame {{ background:{self._BG_DISABLED}; border-radius:6px; }}")
-        self._lbl_name.setText(f"{name} [품절]")
-        self._lbl_name.setStyleSheet(
-            "color:#666; font-size:11px; font-weight:bold; background:transparent;"
-        )
+        self._bg_color   = self._BG_DISABLED
+        self._name       = f"{name} [품절]"
+        self._name_color = "#666666"
+        self.update()
 
 
 class SalesWindow(QMainWindow):
