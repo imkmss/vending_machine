@@ -65,6 +65,13 @@ class Inventory:
         node.stock += amount
         return True
 
+    def set_stock(self, drink_id: int, amount: int) -> bool:
+        node = self.find(drink_id)
+        if node is None:
+            return False
+        node.stock = max(0, amount)
+        return True
+
     def rename(self, drink_id: int, new_name: str) -> bool:
         """서버 COMMAND(0x06) 수신 시 음료 이름 변경."""
         node = self.find(drink_id)

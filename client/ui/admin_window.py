@@ -33,6 +33,16 @@ def _build_bst_from_csv(client_id: str) -> SalesBST:
     return bst
 
 
+def _calc_stock_from_csv(client_id: str, default_stock: int = 10) -> dict[int, int]:
+    """CSV 판매 기록에서 drink_id별 현재 재고를 역산한다."""
+    sold: dict[int, int] = {}
+    for row in load_sales():
+        if row["client_id"] == client_id:
+            did = int(row["drink_id"])
+            sold[did] = sold.get(did, 0) + 1
+    return {did: max(0, default_stock - count) for did, count in sold.items()}
+
+
 class AdminWindow(QMainWindow):
     """관리자 화면 — 재고 현황 / 매출 조회 / 음료 이름 변경."""
 
