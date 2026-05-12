@@ -3,9 +3,9 @@ from __future__ import annotations
 import datetime
 
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget,
+    QMainWindow, QWidget, QStackedWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit, QTableWidget,
+    QLabel, QPushButton, QLineEdit, QComboBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QDialog,
     QDialogButtonBox, QSpinBox,
 )
@@ -13,7 +13,10 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
 from client.core.beverage import Inventory
-from client.data.file_manager import load_sales, load_restocks, append_restock
+from client.data.file_manager import (
+    load_sales, load_restocks, append_restock,
+    append_collection, load_collections,
+)
 from client.data.auth_manager import check_password, set_password
 
 try:
@@ -132,14 +135,74 @@ class AdminWindow(QMainWindow):
             self.inventory.set_stock(node["drink_id"], stock_map.get(node["drink_id"], node["stock"]))
 
     # ── UI 구성 ───────────────────────────────────
+    _SIDEBAR_W   = 200
+    _BTN_H       = 80
+    _BG_WINDOW   = "#2b2b2b"
+    _BG_SIDEBAR  = "#383838"
+    _BTN_NORMAL  = "#cccccc"
+    _BTN_ACTIVE  = "#e8e8e8"
+    _BTN_TEXT    = "#cc2200"
+    _TABLE_STYLE = (
+        "QTableWidget { color: black; }"
+        "QHeaderView::section { color: black; font-weight: bold;"
+        " background: #e0e0e0; border: 1px solid #bbb; }"
+    )
+
     def _init_ui(self):
-        tabs = QTabWidget()
-        self.setCentralWidget(tabs)
-        tabs.addTab(self._build_inventory_tab(),  "재고 현황")
-        tabs.addTab(self._build_sales_tab(),      "매출 조회")
-        tabs.addTab(self._build_rename_tab(),     "이름 변경")
-        tabs.addTab(self._build_restock_tab(),    "재고 보충")
-        tabs.addTab(self._build_password_tab(),   "비밀번호 변경")
+        central = QWidget()
+        central.setStyleSheet(f"background:{self._BG_WINDOW};")
+        self.setCentralWidget(central)
+
+        root = QHBoxLayout(central)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+
+        # 좌측 사이드바
+        sidebar = QWidget()
+        sidebar.setFixedWidth(self._SIDEBAR_W)
+        sidebar.setStyleSheet(f"background:{self._BG_SIDEBAR}; border-radius:6px;")
+        sb_layout = QVBoxLayout(sidebar)
+        sb_layout.setContentsMargins(8, 8, 8, 8)
+        sb_layout.setSpacing(8)
+
+        self._tab_buttons: list[QPushButton] = []
+        for i, label in enumerate(["재고 현황", "매출 조회", "이름 변경", "재고 보충", "비밀번호 변경"]):
+            btn = QPushButton(label)
+            btn.setFixedHeight(self._BTN_H)
+            btn.setCheckable(True)
+            btn.setFont(QFont("맑은 고딕", 24, QFont.Bold))
+            btn.clicked.connect(lambda _, idx=i: self._switch_tab(idx))
+            self._tab_buttons.append(btn)
+            sb_layout.addWidget(btn)
+
+        sb_layout.addStretch()
+        root.addWidget(sidebar)
+
+        # 우측 콘텐츠 영역
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet(
+            "QWidget { color: black; background: #f5f5f5; }"
+            "QStackedWidget { border-radius: 6px; }"
+        )
+        self._stack.addWidget(self._build_inventory_tab())
+        self._stack.addWidget(self._build_sales_tab())
+        self._stack.addWidget(self._build_rename_tab())
+        self._stack.addWidget(self._build_restock_tab())
+        self._stack.addWidget(self._build_password_tab())
+        root.addWidget(self._stack)
+
+        self._switch_tab(0)
+
+    def _switch_tab(self, idx: int):
+        self._stack.setCurrentIndex(idx)
+        for i, btn in enumerate(self._tab_buttons):
+            active = i == idx
+            btn.setChecked(active)
+            bg = self._BTN_ACTIVE if active else self._BTN_NORMAL
+            btn.setStyleSheet(
+                f"QPushButton {{ background:{bg}; color:{self._BTN_TEXT};"
+                f" border-radius:8px; font-size:26px; font-weight:bold; }}"
+            )
 
     # ── 탭 1: 재고 현황 ───────────────────────────
     def _build_inventory_tab(self) -> QWidget:
@@ -152,6 +215,7 @@ class AdminWindow(QMainWindow):
         self._inv_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._inv_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._inv_table.setAlternatingRowColors(True)
+        self._inv_table.setStyleSheet(self._TABLE_STYLE)
         layout.addWidget(self._inv_table)
 
         btn_refresh = QPushButton("새로고침")
@@ -182,44 +246,75 @@ class AdminWindow(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # 날짜 범위 + 조회 버튼
-        form = QHBoxLayout()
-        form.addWidget(QLabel("시작일 (YYYYMMDD):"))
-        self._edit_start = QLineEdit()
-        self._edit_start.setPlaceholderText("20260101")
-        form.addWidget(self._edit_start)
-        form.addWidget(QLabel("종료일:"))
-        self._edit_end = QLineEdit()
-        self._edit_end.setPlaceholderText("20261231")
-        form.addWidget(self._edit_end)
+        today  = datetime.date.today()
+        years  = [str(y) for y in range(2024, today.year + 3)]
+        months = [f"{m:02d}" for m in range(1, 13)]
+        days   = [f"{d:02d}" for d in range(1, 32)]
 
-        # 일별 / 월별 토글
+        def make_date_row(label: str, default: datetime.date):
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            row.addWidget(QLabel(label))
+            cb_y = QComboBox(); cb_y.addItems(years); cb_y.setCurrentText(str(default.year))
+            cb_m = QComboBox(); cb_m.addItems(months); cb_m.setCurrentText(f"{default.month:02d}")
+            cb_d = QComboBox(); cb_d.addItems(days);   cb_d.setCurrentText(f"{default.day:02d}")
+            for cb in (cb_y, cb_m, cb_d):
+                cb.setFixedWidth(70)
+            row.addWidget(cb_y); row.addWidget(QLabel("년"))
+            row.addWidget(cb_m); row.addWidget(QLabel("월"))
+            row.addWidget(cb_d); row.addWidget(QLabel("일"))
+            row.addStretch()
+            return row, cb_y, cb_m, cb_d
+
+        start_row, self._cb_sy, self._cb_sm, self._cb_sd = make_date_row(
+            "시작일:", datetime.date(today.year, 1, 1)
+        )
+        end_row,   self._cb_ey, self._cb_em, self._cb_ed = make_date_row(
+            "종료일:", today
+        )
+        layout.addLayout(start_row)
+        layout.addLayout(end_row)
+
+        # 일별 / 월별 토글 + 조회 버튼
+        btn_row = QHBoxLayout()
         self._btn_daily   = QPushButton("일별")
         self._btn_monthly = QPushButton("월별")
         for btn in (self._btn_daily, self._btn_monthly):
             btn.setCheckable(True)
             btn.setFixedWidth(54)
             btn.setStyleSheet(
-                "QPushButton { background:#E0E0E0; border-radius:4px; font-size:12px; }"
+                "QPushButton { background:#E0E0E0; color:black; border-radius:4px; font-size:12px; }"
                 "QPushButton:checked { background:#1976D2; color:white; }"
             )
         self._btn_daily.setChecked(True)
         self._btn_daily.clicked.connect(lambda: self._set_chart_mode("daily"))
         self._btn_monthly.clicked.connect(lambda: self._set_chart_mode("monthly"))
-        form.addWidget(self._btn_daily)
-        form.addWidget(self._btn_monthly)
-
         btn_query = QPushButton("조회")
         btn_query.setFixedWidth(60)
         btn_query.setStyleSheet("background:#388E3C; color:white; border-radius:6px; font-size:13px;")
         btn_query.clicked.connect(self._query_sales)
-        form.addWidget(btn_query)
-        layout.addLayout(form)
+        btn_row.addWidget(self._btn_daily)
+        btn_row.addWidget(self._btn_monthly)
+        btn_row.addWidget(btn_query)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
-        # 합계 라벨
+        # 합계 라벨 + 수금 버튼
+        total_row = QHBoxLayout()
         self._lbl_sales_total = QLabel("합계: 0 원")
         self._lbl_sales_total.setFont(QFont("맑은 고딕", 12, QFont.Bold))
-        layout.addWidget(self._lbl_sales_total)
+        total_row.addWidget(self._lbl_sales_total)
+
+        self._btn_collect = QPushButton("수금")
+        self._btn_collect.setFixedSize(64, 30)
+        self._btn_collect.setStyleSheet(
+            "background:#E53935; color:white; border-radius:6px; font-size:13px; font-weight:bold;"
+        )
+        self._btn_collect.setVisible(False)
+        self._btn_collect.clicked.connect(self._on_collect)
+        total_row.addWidget(self._btn_collect)
+        total_row.addStretch()
+        layout.addLayout(total_row)
 
         # 음료별 매출 테이블
         self._drink_table = QTableWidget(0, 3)
@@ -228,6 +323,7 @@ class AdminWindow(QMainWindow):
         self._drink_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._drink_table.setAlternatingRowColors(True)
         self._drink_table.setFixedHeight(160)
+        self._drink_table.setStyleSheet(self._TABLE_STYLE)
         layout.addWidget(self._drink_table)
 
         # 차트
@@ -250,19 +346,22 @@ class AdminWindow(QMainWindow):
         self._draw_chart()
 
     def _query_sales(self):
-        try:
-            start = int(self._edit_start.text().strip())
-            end   = int(self._edit_end.text().strip())
-        except ValueError:
-            QMessageBox.warning(self, "입력 오류", "날짜를 YYYYMMDD 형식으로 입력하세요.")
+        start = int(self._cb_sy.currentText() + self._cb_sm.currentText() + self._cb_sd.currentText())
+        end   = int(self._cb_ey.currentText() + self._cb_em.currentText() + self._cb_ed.currentText())
+        if start > end:
+            QMessageBox.warning(self, "입력 오류", "시작일이 종료일보다 늦습니다.")
             return
 
         daily, monthly, by_drink = _load_sales_detail(self.client_id, start, end)
         self._last_daily   = daily
         self._last_monthly = monthly
+        self._last_start   = start
+        self._last_end     = end
 
         total = sum(daily.values())
+        self._last_total = total
         self._lbl_sales_total.setText(f"합계: {total:,} 원")
+        self._btn_collect.setVisible(total > 0)
 
         # 음료별 테이블 채우기
         rows = sorted(by_drink.items(), key=lambda x: -x[1]["total"])
@@ -273,6 +372,32 @@ class AdminWindow(QMainWindow):
             self._drink_table.setItem(r, 2, QTableWidgetItem(f"{data['total']:,}"))
 
         self._draw_chart()
+
+    def _on_collect(self):
+        start_str = str(self._last_start)
+        end_str   = str(self._last_end)
+        for row in load_collections():
+            if (row["client_id"] == self.client_id
+                    and row["start_date"] == start_str
+                    and row["end_date"]   == end_str
+                    and row["mode"]       == self._chart_mode):
+                QMessageBox.warning(
+                    self, "수금 불가",
+                    f"이미 수금된 기록이 있습니다.\n"
+                    f"(수금일: {row['collected_at']}, {row['amount']}원)"
+                )
+                return
+
+        append_collection(
+            collected_at=datetime.date.today().isoformat(),
+            client_id=self.client_id,
+            start_date=start_str,
+            end_date=end_str,
+            mode=self._chart_mode,
+            amount=self._last_total,
+        )
+        self._btn_collect.setVisible(False)
+        QMessageBox.information(self, "수금 완료", f"{self._last_total:,} 원 수금이 기록되었습니다.")
 
     def _draw_chart(self):
         if not _MPL:
@@ -341,11 +466,15 @@ class AdminWindow(QMainWindow):
         if not new_name:
             self._lbl_rename_result.setText("새 이름을 입력하세요.")
             return
-        if self.inventory.rename(drink_id, new_name):
-            self._lbl_rename_result.setText(f"drink_id {drink_id} → '{new_name}' 변경 완료")
-            self._refresh_inventory()
-        else:
-            self._lbl_rename_result.setText(f"drink_id {drink_id}를 찾을 수 없습니다.")
+        node = self.inventory.find(drink_id)
+        if node is None:
+            self._lbl_rename_result.setText("해당 음료를 찾을 수 없습니다.")
+            return
+        old_name = node.name
+        self.inventory.rename(drink_id, new_name)
+        self._lbl_rename_result.setStyleSheet("color: green;")
+        self._lbl_rename_result.setText(f"'{old_name}' → '{new_name}' 변경 완료")
+        self._refresh_inventory()
 
     # ── 탭 4: 재고 보충 ───────────────────────────
     def _build_restock_tab(self) -> QWidget:
@@ -365,8 +494,8 @@ class AdminWindow(QMainWindow):
 
         grid.addWidget(QLabel("보충 수량:"), 1, 0)
         self._spin_amount = QSpinBox()
-        self._spin_amount.setRange(1, 100)
-        self._spin_amount.setValue(10)
+        self._spin_amount.setRange(1, 10)
+        self._spin_amount.setValue(1)
         grid.addWidget(self._spin_amount, 1, 1)
         layout.addLayout(grid)
 
@@ -394,10 +523,16 @@ class AdminWindow(QMainWindow):
             self._lbl_restock_result.setText(f"drink_id {drink_id}를 찾을 수 없습니다.")
             return
 
-        amount = self._spin_amount.value()
+        MAX_STOCK = 10
+        current = node.stock
+        if current >= MAX_STOCK:
+            self._lbl_restock_result.setStyleSheet("color: red;")
+            self._lbl_restock_result.setText(f"'{node.name}'은 이미 최대 재고({MAX_STOCK}개)입니다.")
+            return
+
+        amount = min(self._spin_amount.value(), MAX_STOCK - current)
         self.inventory.restock(drink_id, amount)
 
-        # 보충 이력 파일에 기록 (오프라인 상태에서도 동작)
         append_restock(
             date_str=datetime.date.today().isoformat(),
             client_id=self.client_id,
@@ -405,8 +540,9 @@ class AdminWindow(QMainWindow):
             drink_name=node.name,
             amount=amount,
         )
+        self._lbl_restock_result.setStyleSheet("color: green;")
         self._lbl_restock_result.setText(
-            f"'{node.name}' {amount}개 보충 완료 (현재 재고: {node.stock}개)"
+            f"'{node.name}' {amount}개 보충 완료 (현재 재고: {node.stock}개 / {MAX_STOCK}개)"
         )
         self._refresh_inventory()
 
