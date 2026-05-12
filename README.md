@@ -6,7 +6,8 @@
 |------|------|------|
 | 1단계 | 자료구조 구현 (Linked List, Stack, Queue, BST, Sort/Search) | ✅ 완료 |
 | 2단계 | 클라이언트 로직 + UI (거래 세션, TCP 소켓, CSV, PyQt5 화면) | ✅ 완료 |
-| 3단계 | TCP 서버 (데이터 수신, BST 저장, 저재고 알림, COMMAND 전송) | ⬜ 미구현 |
+| 2.5단계 | 관리자 화면 (비밀번호 인증, 매출 조회, 재고 보충, 수금) | ✅ 완료 |
+| 3단계 | TCP 서버 (데이터 수신, BST 저장, 저재고 알림, COMMAND 전송) | 🔄 구현 중 |
 | 4단계 | 서버 간 동기화 (Raw Socket, SYNC/SYNC_ACK) | ⬜ 미구현 |
 | 5단계 | 웹 인터페이스 (Flask + Chart.js) | ⬜ 미구현 |
 
@@ -18,14 +19,23 @@
 # 자판기 화면만
 python3 main.py VM_01
 
-# 관리자 화면만
+# 관리자 화면만 (비밀번호 입력 필요)
 python3 main.py VM_01 --admin
 
 # 두 창 모두
 python3 main.py VM_01 --all
+
+# 서버 주소/포트 지정
+python3 main.py VM_01 --host 192.168.0.1 --port 9999
+
+# TCP 서버 실행
+python3 -m server.server_main
+python3 -m server.server_main --host 0.0.0.0 --port 9999
 ```
 
 VM_ID: `VM_01` / `VM_02` / `VM_03` (생략 시 기본값 VM_01)
+
+> **초기 관리자 비밀번호**: `admin123!` (첫 실행 시 자동 설정)
 
 ---
 
@@ -34,8 +44,12 @@ VM_ID: `VM_01` / `VM_02` / `VM_03` (생략 시 기본값 VM_01)
 ```
 vending_machine/
 ├── README.md
-├── main.py                        ← 진입점 (실행 모드 분기)
-├── server/                        ← 3단계 이후 구현 예정
+├── main.py                        ← 진입점 (실행 모드 분기, 비밀번호 인증)
+├── server/
+│   ├── __init__.py
+│   ├── server_main.py             ← VendingServer (accept 루프)
+│   ├── server_handler.py          ← ClientHandler (per-connection 스레드)
+│   └── server_db.py               ← SalesDataStore (BST, thread-safe)
 └── client/
     ├── core/
     │   ├── beverage.py            ← Linked List 음료 재고 관리
@@ -44,14 +58,18 @@ vending_machine/
     │   ├── sales_tree.py          ← SalesBST (BST 매출 로그)
     │   └── sort_search.py         ← 선택/퀵 정렬, 선형/이진 탐색
     ├── data/
-    │   ├── file_manager.py        ← CSV 로컬 백업 & 복원
-    │   └── sales_log.csv          ← 판매 로그 (자동 생성)
+    │   ├── file_manager.py        ← CSV 로컬 백업 & 복원 (판매/보충/수금)
+    │   ├── auth_manager.py        ← 관리자 비밀번호 SHA-256 인증
+    │   ├── sales_log.csv          ← 판매 로그 (자동 생성, gitignore)
+    │   ├── restock_log.csv        ← 재고 보충 로그 (자동 생성, gitignore)
+    │   ├── collection_log.csv     ← 수금 로그 (자동 생성, gitignore)
+    │   └── admin_auth.txt         ← 비밀번호 해시 (자동 생성, gitignore)
     ├── images/                    ← 음료 버튼 이미지 ({음료명}.png/jpg)
     ├── network/
     │   └── client_socket.py       ← TCP 소켓 송신 스레드, Heartbeat
     └── ui/
         ├── sales_window.py        ← 고객용 자판기 화면 (PyQt5)
-        └── admin_window.py        ← 관리자 화면 (PyQt5)
+        └── admin_window.py        ← 관리자 화면 (PyQt5, 사이드바 5탭)
 ```
 
 ---
@@ -76,6 +94,50 @@ QMainWindow (450×595)
 - 구매 가능: 배경 `#FFFFFF`, 글씨 `#22FF33`
 - 품절: 배경 `#3A3A3A`, 글씨 `#666`
 - 이미지: `client/images/{음료명}` 자동 로딩, resizeEvent로 동적 스케일링
+
+---
+
+## 관리자 화면 (admin_window.py)
+
+### 실행 및 인증
+
+- 최초 실행 시 기본 비밀번호 `admin123!` 자동 설정 (`admin_auth.txt`에 SHA-256 해시로 저장)
+- 비밀번호 조건: **8자리 이상, 숫자 1개 이상, 특수문자 1개 이상**
+
+### UI 구조
+
+```
+AdminWindow (740×560)
+├── 좌측 사이드바 (200px) — 탭 선택 버튼 5개
+│   ├── 재고 현황
+│   ├── 매출 조회
+│   ├── 이름 변경
+│   ├── 재고 보충
+│   └── 비밀번호 변경
+└── 우측 콘텐츠 영역 (QStackedWidget)
+```
+
+### 탭별 기능
+
+| 탭 | 기능 |
+|----|------|
+| 재고 현황 | CSV 기반 실제 재고 표시 (판매 - 보충 역산), 새로고침 |
+| 매출 조회 | 년/월/일 드롭박스로 기간 선택, 일별/월별 토글, 음료별 매출 테이블 + 막대 차트 |
+| 이름 변경 | drink_id + 새 이름 입력 → `'기존명' → '새이름'` 결과 표시 |
+| 재고 보충 | drink_id + 수량(1~10) 선택, 최대 재고 10개 초과 불가, `restock_log.csv` 기록 |
+| 비밀번호 변경 | 현재 PW 확인 후 새 PW 설정, 형식 검증 |
+
+### 수금 기능
+
+- 매출 조회 후 합계 > 0 이면 **수금 버튼** 표시
+- 수금 시 `collection_log.csv`에 기록 (수금일, 자판기ID, 시작일, 종료일, 조회모드, 금액)
+- 동일 조건(시작일 + 종료일 + 조회모드)으로 중복 수금 시 경고
+
+### 재고 계산 방식
+
+```
+현재 재고 = 초기 재고(10) - 판매 수(sales_log.csv) + 보충 수(restock_log.csv)
+```
 
 ---
 
@@ -267,6 +329,30 @@ Server1  ◀──── Raw Socket (사용자 정의 프로토콜) ────
 - 음료 재고 부족 시 → 관리자에게 알림 메시지 전송
 - 음료 이름 변경 명령 → 해당 자판기로 전달
 - 기타 관리 명령
+
+---
+
+## 2.5. TCP 서버 구현 현황 (3단계 진행 중)
+
+### 서버 구성 요소
+
+| 파일 | 클래스 | 역할 |
+|------|--------|------|
+| `server_main.py` | `VendingServer` | 소켓 bind/listen, accept 루프 |
+| `server_handler.py` | `ClientHandler` | per-connection 스레드, 메시지 파싱·디스패치 |
+| `server_db.py` | `SalesDataStore` | BST 기반 매출 저장, thread-safe (Lock) |
+
+### 처리 흐름
+
+```
+accept() → ClientHandler(thread).start()
+              └── recv 12-byte header
+              └── recv payload
+              └── dispatch:
+                    SALE(0x01)      → record_sale() + ACK
+                                      재고 < 3 이면 COMMAND(0x06) 전송
+                    HEARTBEAT(0x05) → ACK
+```
 
 ---
 
