@@ -3,5 +3,6 @@ node_modules/
 .DS_Store
 *.log
 client/data/sales_log.csv
-client/data/sales_log.csv
 client/data/admin_auth.txt
+client/data/restock_log.csv
+client/data/collection_log.csv
