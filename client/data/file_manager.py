@@ -70,7 +70,42 @@ def append_restock(
         })
 
 
+COLLECTION_PATH   = os.path.join(os.path.dirname(__file__), "collection_log.csv")
+COLLECTION_FIELDS = ["collected_at", "client_id", "start_date", "end_date", "mode", "amount"]
+
+
+def append_collection(
+    collected_at: str,
+    client_id:    str,
+    start_date:   str,
+    end_date:     str,
+    mode:         str,
+    amount:       int,
+    path:         str = COLLECTION_PATH,
+):
+    """수금 이벤트를 CSV에 기록."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=COLLECTION_FIELDS).writeheader()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=COLLECTION_FIELDS).writerow({
+            "collected_at": collected_at,
+            "client_id":    client_id,
+            "start_date":   start_date,
+            "end_date":     end_date,
+            "mode":         mode,
+            "amount":       amount,
+        })
+
+
 def load_restocks(path: str = RESTOCK_PATH) -> list[dict]:
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def load_collections(path: str = COLLECTION_PATH) -> list[dict]:
     if not os.path.exists(path):
         return []
     with open(path, "r", newline="", encoding="utf-8") as f:
