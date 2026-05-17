@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QHeaderView, QMessageBox, QDialog,
     QDialogButtonBox, QSpinBox,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from client.core.beverage import Inventory
@@ -118,6 +118,8 @@ class PasswordDialog(QDialog):
 class AdminWindow(QMainWindow):
     """관리자 화면 — 재고 현황 / 매출 조회 / 이름 변경 / 재고 보충 / 비밀번호 변경."""
 
+    closed = pyqtSignal()   # 창 닫힐 때 판매 화면 재활성화용
+
     def __init__(self, inventory: Inventory, client_id: str = "VM_01"):
         super().__init__()
         self.inventory = inventory
@@ -127,6 +129,10 @@ class AdminWindow(QMainWindow):
         self.setFixedSize(740, 560)
         self._sync_stock_from_csv()
         self._init_ui()
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
 
     # ── 재고 동기화 ───────────────────────────────
     def _sync_stock_from_csv(self):

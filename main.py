@@ -10,7 +10,7 @@
 import logging
 import sys
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from client.ui.sales_window import SalesWindow
 from client.ui.admin_window import AdminWindow, PasswordDialog
@@ -73,7 +73,13 @@ def main():
         sales.show()
         if not _require_password():
             sys.exit(0)
+        QMessageBox.warning(
+            None, "관리자 모드 활성화",
+            "관리자 모드가 활성화됩니다.\n자판기 운영이 잠시 중단됩니다.",
+        )
+        sales.setEnabled(False)
         admin = AdminWindow(inventory=sales.inventory, client_id=client_id)
+        admin.closed.connect(lambda: sales.setEnabled(True))
         admin.show()
 
     sys.exit(app.exec_())
