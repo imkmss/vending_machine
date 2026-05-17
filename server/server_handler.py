@@ -19,11 +19,13 @@ LOW_STOCK_THRESHOLD = 3
 class ClientHandler(threading.Thread):
     """서버 측 단일 클라이언트 연결을 처리하는 데몬 스레드."""
 
-    def __init__(self, conn: socket.socket, addr: tuple, data_store: SalesDataStore):
+    def __init__(self, conn: socket.socket, addr: tuple, data_store: SalesDataStore,
+                 sync_manager=None):
         super().__init__(daemon=True)
-        self.conn       = conn
-        self.addr       = addr
-        self.data_store = data_store
+        self.conn         = conn
+        self.addr         = addr
+        self.data_store   = data_store
+        self.sync_manager = sync_manager
 
     def run(self):
         logger.info("[서버] 핸들러 시작 %s", self.addr)
@@ -73,6 +75,8 @@ class ClientHandler(threading.Thread):
             "[서버] SALE 저장 — %s %s %s (%d원)",
             client_id, date, sold_drink.get("name", "?"), price,
         )
+        if self.sync_manager:
+            self.sync_manager.push(client_id, date, price)
 
         self._send(MsgType.ACK)
 

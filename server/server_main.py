@@ -12,6 +12,7 @@ import socket
 
 from server.server_db import SalesDataStore
 from server.server_handler import ClientHandler
+from server.sync_manager import SyncManager
 
 HOST = "0.0.0.0"
 PORT = 9999
@@ -22,10 +23,17 @@ logger = logging.getLogger(__name__)
 class VendingServer:
     """TCP 서버 — 다중 자판기 클라이언트 연결을 수신·처리."""
 
-    def __init__(self, host: str = HOST, port: int = PORT):
-        self.host       = host
-        self.port       = port
-        self.data_store = SalesDataStore()
+    def __init__(
+        self,
+        host:         str           = HOST,
+        port:         int           = PORT,
+        data_store:   SalesDataStore | None = None,
+        sync_manager: SyncManager   | None = None,
+    ):
+        self.host         = host
+        self.port         = port
+        self.data_store   = data_store or SalesDataStore()
+        self.sync_manager = sync_manager
 
     def start(self):
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -40,7 +48,7 @@ class VendingServer:
                 conn, addr = server_sock.accept()
                 print(f"[서버] 클라이언트 연결: {addr}")
                 logger.info("클라이언트 연결: %s", addr)
-                ClientHandler(conn, addr, self.data_store).start()
+                ClientHandler(conn, addr, self.data_store, self.sync_manager).start()
         except KeyboardInterrupt:
             print("\n[서버] 종료")
         finally:
@@ -49,12 +57,36 @@ class VendingServer:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="자판기 TCP 서버")
-    parser.add_argument("--host", default=HOST)
-    parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--host",           default=HOST)
+    parser.add_argument("--port",           type=int, default=PORT)
+    parser.add_argument("--sync-port",      type=int, default=None,
+                        help="이 서버의 동기화 수신 포트 (e.g. 10000)")
+    parser.add_argument("--peer-host",      default=None,
+                        help="피어 서버 호스트 (e.g. localhost)")
+    parser.add_argument("--peer-sync-port", type=int, default=None,
+                        help="피어 서버의 동기화 수신 포트 (e.g. 10001)")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    VendingServer(host=args.host, port=args.port).start()
+
+    data_store   = SalesDataStore()
+    sync_manager = None
+
+    if args.sync_port and args.peer_host and args.peer_sync_port:
+        sync_manager = SyncManager(
+            my_sync_port=args.sync_port,
+            peer_host=args.peer_host,
+            peer_sync_port=args.peer_sync_port,
+            data_store=data_store,
+        )
+        sync_manager.start()
+
+    VendingServer(
+        host=args.host,
+        port=args.port,
+        data_store=data_store,
+        sync_manager=sync_manager,
+    ).start()
