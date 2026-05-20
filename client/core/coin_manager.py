@@ -122,3 +122,95 @@ def get_inserted_coins(coin) -> ChangeStack:
 def release_coin(coin) -> None:
     """CoinSlot 메모리를 해제한다 (호출 측에서 변수에 None 대입)."""
     del coin
+
+
+# ------------------------------------------------------------------
+# ChangeReserve — 자판기 내 잔돈 보유고
+# ------------------------------------------------------------------
+RESERVE_DENOMS = [500, 100, 50, 10]   # 거스름돈으로 사용하는 단위 (큰 것부터)
+MIN_RESERVE    = 3                     # 수금 후 각 단위 최소 유지 개수
+
+
+class ChangeReserve:
+    """
+    자판기 내 동전 보유고.
+    거스름돈 단위(10·50·100·500원)는 각 10개로 초기화 (PDF 요건).
+    1000원권은 거스름돈으로 사용하지 않으며 별도 집계만 한다.
+    """
+
+    INITIAL = 10   # 각 동전 단위 초기 보유 수량
+
+    def __init__(self):
+        # 거스름돈 단위별 보유 수량
+        self._coins: dict[int, int] = {
+            10:   self.INITIAL,
+            50:   self.INITIAL,
+            100:  self.INITIAL,
+            500:  self.INITIAL,
+            1000: 0,   # 지폐 — 거스름돈으로 사용 안 함, 집계용
+        }
+
+    # ── 조회 ────────────────────────────────────────────────────
+    def status(self) -> dict[int, int]:
+        """단위별 보유 수량 반환 (읽기 전용 복사본)."""
+        return dict(self._coins)
+
+    def total_amount(self) -> int:
+        """보유고 총 금액(원) 반환."""
+        return sum(unit * cnt for unit, cnt in self._coins.items())
+
+    # ── 거스름돈 가능 여부 확인 ─────────────────────────────────
+    def can_make_change(self, amount: int) -> bool:
+        """amount원 거스름돈을 현재 보유고로 줄 수 있는지 시뮬레이션."""
+        remain = amount
+        for unit in RESERVE_DENOMS:
+            count = min(remain // unit, self._coins.get(unit, 0))
+            remain -= unit * count
+        return remain == 0
+
+    # ── 거스름돈 지급 ───────────────────────────────────────────
+    def give_change(self, amount: int) -> ChangeStack | None:
+        """
+        거스름돈 지급.
+        성공 시 ChangeStack 반환하고 보유고 차감.
+        잔돈 부족 시 None 반환 (보유고 변경 없음).
+        """
+        if amount == 0:
+            return ChangeStack()
+        if not self.can_make_change(amount):
+            return None
+        stack  = ChangeStack()
+        remain = amount
+        for unit in RESERVE_DENOMS:
+            count = min(remain // unit, self._coins.get(unit, 0))
+            if count > 0:
+                self._coins[unit] -= count
+                remain -= unit * count
+                stack.push(unit, count)
+        return stack
+
+    # ── 투입 동전 편입 ──────────────────────────────────────────
+    def accept_coins(self, coin) -> None:
+        """고객이 투입한 동전(CoinSlot)을 보유고에 추가."""
+        for unit in VALID_UNITS:
+            idx      = UNIT_INDEX[unit]
+            inserted = coin.contents.slot[idx]
+            if inserted > 0:
+                self._coins[unit] = self._coins.get(unit, 0) + inserted
+
+    # ── 수금 ────────────────────────────────────────────────────
+    def collect(self, min_keep: int = MIN_RESERVE) -> int:
+        """
+        수금: 각 거스름돈 단위는 min_keep개 이상 남기고 나머지 수거.
+        1000원권은 전액 수거.
+        수거된 총 금액(원) 반환.
+        """
+        collected = 0
+        for unit in RESERVE_DENOMS:
+            available = max(0, self._coins.get(unit, 0) - min_keep)
+            self._coins[unit] -= available
+            collected += unit * available
+        # 1000원권 전액 수거
+        collected += 1000 * self._coins.get(1000, 0)
+        self._coins[1000] = 0
+        return collected
