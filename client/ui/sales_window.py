@@ -24,7 +24,7 @@ def _load_pixmap(name: str) -> QPixmap | None:
 
 from client.core.beverage import Inventory
 from client.core.transaction import SendQueue, VendingSession
-from client.core.coin_manager import OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT
+from client.core.coin_manager import OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT, ChangeReserve
 from client.data.file_manager import append_sale, get_daily_total
 
 _INSERT_MSG = {
@@ -170,7 +170,8 @@ class SalesWindow(QMainWindow):
 
         self.inventory  = Inventory()
         self.send_queue = SendQueue()
-        self.session    = VendingSession(client_id, self.inventory, self.send_queue)
+        self.reserve    = ChangeReserve()   # 자판기별 독립 잔돈 보유고
+        self.session    = VendingSession(client_id, self.inventory, self.send_queue, self.reserve)
 
         from datetime import date
         self.session.daily_sales = get_daily_total(client_id, date.today().isoformat())
@@ -346,14 +347,19 @@ class SalesWindow(QMainWindow):
 
     # ── 음료 버튼 상태 갱신 ───────────────────
     def _refresh_drinks(self):
+        total     = self.session.total
         available = {n.drink_id for n in self.session.available_drinks()}
         for node in self.inventory.to_list():
-            did = node["drink_id"]
-            btn = self._drink_btns[did]
+            did   = node["drink_id"]
+            btn   = self._drink_btns[did]
+            price = node["price"]
             if node["stock"] == 0:
                 btn.set_soldout(node["name"])
-            elif did in available:
+            elif did in available and self.reserve.can_make_change(total - price):
                 btn.set_active(node["name"], purchasable=True)
+            elif did in available:
+                # 금액은 충분하나 거스름돈 부족
+                btn.set_active(node["name"], purchasable=False)
             else:
                 btn.set_disabled_style(node["name"])
 
