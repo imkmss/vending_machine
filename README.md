@@ -7,8 +7,10 @@
 | 1단계 | 자료구조 구현 (Linked List, Stack, Queue, BST, Sort/Search) | ✅ 완료 |
 | 2단계 | 클라이언트 로직 + UI (거래 세션, TCP 소켓, CSV, PyQt5 화면) | ✅ 완료 |
 | 2.5단계 | 관리자 화면 (비밀번호 인증, 매출 조회, 재고 보충, 수금) | ✅ 완료 |
-| 3단계 | TCP 서버 (데이터 수신, BST 저장, 저재고 알림, COMMAND 전송) | 🔄 구현 중 |
-| 4단계 | 서버 간 동기화 (Raw Socket, SYNC/SYNC_ACK) | ⬜ 미구현 |
+| 3단계 | TCP 서버 (데이터 수신, BST 저장, 저재고 알림, COMMAND 전송) | ✅ 완료 |
+| 3.5단계 | 자판기별 독립 잔돈 보유고 (ChangeReserve), 관리자 수금 탭 | ✅ 완료 |
+| 3.6단계 | 관리자 로그인 시 자판기 운영 중단 (setEnabled + closed 시그널) | ✅ 완료 |
+| 4단계 | 서버 간 동기화 (TCP SYNC/SYNC_ACK, 전용 sync 포트) | ✅ 완료 |
 | 5단계 | 웹 인터페이스 (Flask + Chart.js) | ⬜ 미구현 |
 
 ---
@@ -69,7 +71,7 @@ vending_machine/
     │   └── client_socket.py       ← TCP 소켓 송신 스레드, Heartbeat
     └── ui/
         ├── sales_window.py        ← 고객용 자판기 화면 (PyQt5)
-        └── admin_window.py        ← 관리자 화면 (PyQt5, 사이드바 5탭)
+        └── admin_window.py        ← 관리자 화면 (PyQt5, 사이드바 6탭)
 ```
 
 ---
@@ -108,11 +110,12 @@ QMainWindow (450×595)
 
 ```
 AdminWindow (740×560)
-├── 좌측 사이드바 (200px) — 탭 선택 버튼 5개
+├── 좌측 사이드바 (200px) — 탭 선택 버튼 6개
 │   ├── 재고 현황
 │   ├── 매출 조회
 │   ├── 이름 변경
 │   ├── 재고 보충
+│   ├── 화폐 현황
 │   └── 비밀번호 변경
 └── 우측 콘텐츠 영역 (QStackedWidget)
 ```
@@ -125,6 +128,7 @@ AdminWindow (740×560)
 | 매출 조회 | 년/월/일 드롭박스로 기간 선택, 일별/월별 토글, 음료별 매출 테이블 + 막대 차트 |
 | 이름 변경 | drink_id + 새 이름 입력 → `'기존명' → '새이름'` 결과 표시 |
 | 재고 보충 | drink_id + 수량(1~10) 선택, 최대 재고 10개 초과 불가, `restock_log.csv` 기록 |
+| 화폐 현황 | 자판기 잔돈 보유고 단위별 수량·금액 조회, 수금(각 단위 최소 3개 유지 후 수거) |
 | 비밀번호 변경 | 현재 PW 확인 후 새 PW 설정, 형식 검증 |
 
 ### 수금 기능
@@ -332,15 +336,16 @@ Server1  ◀──── Raw Socket (사용자 정의 프로토콜) ────
 
 ---
 
-## 2.5. TCP 서버 구현 현황 (3단계 진행 중)
+## 2.5. TCP 서버 구현 현황
 
 ### 서버 구성 요소
 
 | 파일 | 클래스 | 역할 |
 |------|--------|------|
-| `server_main.py` | `VendingServer` | 소켓 bind/listen, accept 루프 |
+| `server_main.py` | `VendingServer` | 소켓 bind/listen, accept 루프, SyncManager 초기화 |
 | `server_handler.py` | `ClientHandler` | per-connection 스레드, 메시지 파싱·디스패치 |
 | `server_db.py` | `SalesDataStore` | BST 기반 매출 저장, thread-safe (Lock) |
+| `sync_manager.py` | `SyncManager` | Server ↔ Server 실시간 동기화 (전용 sync 포트) |
 
 ### 처리 흐름
 
@@ -351,7 +356,24 @@ accept() → ClientHandler(thread).start()
               └── dispatch:
                     SALE(0x01)      → record_sale() + ACK
                                       재고 < 3 이면 COMMAND(0x06) 전송
+                                      sync_manager.push() → 상대 서버로 SYNC 전송
                     HEARTBEAT(0x05) → ACK
+
+SyncManager (별도 스레드 2개)
+  listener_loop : peer의 SYNC 수신 → data_store 저장 → SYNC_ACK 응답
+  sender_loop   : 큐에서 SYNC 소비 → peer로 전송 → 실패 시 재큐 (5초 후 재시도)
+```
+
+### 서버 실행 옵션
+
+```bash
+# Server1 (포트 9999, sync 포트 10000, Server2로 동기화)
+python3 -m server.server_main --port 9999 --sync-port 10000 \
+        --peer-host localhost --peer-sync-port 10001
+
+# Server2 (포트 9998, sync 포트 10001, Server1로 동기화)
+python3 -m server.server_main --port 9998 --sync-port 10001 \
+        --peer-host localhost --peer-sync-port 10000
 ```
 
 ---
@@ -537,10 +559,16 @@ class Inventory:
 
 ---
 
-### ② Stack — 거스름돈 계산
+### ② Stack — 거스름돈 계산 & 잔돈 보유고
 
 거스름돈을 계산할 때 동전 단위(500→100→50→10)를 순서대로 push합니다.
 반환 시 pop하여 출력하면 큰 단위부터 자동으로 처리됩니다.
+
+**ChangeReserve** (자판기별 독립 잔돈 보유고):
+- 각 단위(10·50·100·500원) 초기 10개로 시작
+- 음료 판매 시 투입 동전을 보유고에 편입 후 거스름돈 차감
+- 거스름돈 지급 불가 시 구매 차단 (화면에서 구매 가능 버튼 비활성)
+- 관리자 수금: 각 단위 최소 3개 유지 후 나머지 수거, `collection_log.csv` 기록
 
 ```
 잔액 670원 계산 과정:
@@ -848,7 +876,7 @@ TOTAL_LIMIT   = 3
 
 ---
 
-## 6. 전체 통신 흐름 요약
+## 7. 전체 통신 흐름 요약
 
 ```
 ┌──────────────────────────────────────────────────────────┐
