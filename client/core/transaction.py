@@ -8,8 +8,8 @@ import time
 
 from client.core.beverage import DrinkNode, Inventory
 from client.core.coin_manager import (
-    CoinSlot, ChangeStack,
-    init_coin, insert_coin, calc_change, get_inserted_coins, release_coin,
+    CoinSlot, ChangeStack, ChangeReserve,
+    init_coin, insert_coin, get_inserted_coins, release_coin,
     OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT,
 )
 
@@ -72,11 +72,13 @@ class VendingSession:
     화폐 투입 → 음료 선택 → 거스름돈 반환 / 취소 흐름을 관리.
     """
 
-    def __init__(self, client_id: str, inventory: Inventory, send_queue: SendQueue):
+    def __init__(self, client_id: str, inventory: Inventory, send_queue: SendQueue,
+                 reserve: ChangeReserve | None = None):
         self.client_id   = client_id
         self.inventory   = inventory
         self.send_queue  = send_queue
-        self.daily_sales = 0  # 하루 누적 매출 (프로세스 재시작 시 0 초기화)
+        self.reserve     = reserve or ChangeReserve()
+        self.daily_sales = 0
 
         self._coin: ctypes.POINTER(CoinSlot) | None = None
 
@@ -116,12 +118,19 @@ class VendingSession:
         if self.total < node.price:
             return False, None, f"금액이 부족합니다. ({self.total}원 < {node.price}원)"
 
+        # 거스름돈 가능 여부 확인
+        change_amount = self.total - node.price
+        if change_amount > 0 and not self.reserve.can_make_change(change_amount):
+            return False, None, (
+                f"거스름돈({change_amount:,}원)이 부족합니다.\n정확한 금액을 투입해 주세요."
+            )
+
         # 재고 차감
         self.inventory.sell(drink_id)
 
-        # 거스름돈 계산
-        change_amount = self.total - node.price
-        change_stack  = calc_change(change_amount)
+        # 투입 동전 → 보유고 편입 후 거스름돈 지급
+        self.reserve.accept_coins(self._coin)
+        change_stack = self.reserve.give_change(change_amount)
 
         # 매출 누적
         self.daily_sales += node.price
