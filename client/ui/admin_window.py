@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from client.core.beverage import Inventory
+from client.core.coin_manager import ChangeReserve, MIN_RESERVE
 from client.data.file_manager import (
     load_sales, load_restocks, append_restock,
     append_collection, load_collections,
@@ -120,10 +121,12 @@ class AdminWindow(QMainWindow):
 
     closed = pyqtSignal()   # 창 닫힐 때 판매 화면 재활성화용
 
-    def __init__(self, inventory: Inventory, client_id: str = "VM_01"):
+    def __init__(self, inventory: Inventory, client_id: str = "VM_01",
+                 reserve: ChangeReserve | None = None):
         super().__init__()
         self.inventory = inventory
         self.client_id = client_id
+        self.reserve   = reserve or ChangeReserve()
 
         self.setWindowTitle(f"관리자 — {client_id}")
         self.setFixedSize(740, 560)
@@ -172,7 +175,7 @@ class AdminWindow(QMainWindow):
         sb_layout.setSpacing(8)
 
         self._tab_buttons: list[QPushButton] = []
-        for i, label in enumerate(["재고 현황", "매출 조회", "이름 변경", "재고 보충", "비밀번호 변경"]):
+        for i, label in enumerate(["재고 현황", "매출 조회", "이름 변경", "재고 보충", "화폐 현황", "비밀번호 변경"]):
             btn = QPushButton(label)
             btn.setFixedHeight(self._BTN_H)
             btn.setCheckable(True)
@@ -194,6 +197,7 @@ class AdminWindow(QMainWindow):
         self._stack.addWidget(self._build_sales_tab())
         self._stack.addWidget(self._build_rename_tab())
         self._stack.addWidget(self._build_restock_tab())
+        self._stack.addWidget(self._build_coin_tab())
         self._stack.addWidget(self._build_password_tab())
         root.addWidget(self._stack)
 
@@ -552,7 +556,83 @@ class AdminWindow(QMainWindow):
         )
         self._refresh_inventory()
 
-    # ── 탭 5: 비밀번호 변경 ───────────────────────
+    # ── 탭 5: 화폐 현황 ──────────────────────────
+    def _build_coin_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # 테이블: 단위 / 보유 수량 / 금액
+        self._coin_table = QTableWidget(0, 3)
+        self._coin_table.setHorizontalHeaderLabels(["단위(원)", "보유 수량(개)", "금액(원)"])
+        self._coin_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._coin_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._coin_table.setAlternatingRowColors(True)
+        self._coin_table.setStyleSheet(self._TABLE_STYLE)
+        layout.addWidget(self._coin_table)
+
+        # 합계 레이블
+        self._lbl_coin_total = QLabel("합계: 0 원")
+        self._lbl_coin_total.setAlignment(Qt.AlignRight)
+        self._lbl_coin_total.setFont(QFont("맑은 고딕", 13, QFont.Bold))
+        self._lbl_coin_total.setStyleSheet("color: #1a237e; padding-right: 4px;")
+        layout.addWidget(self._lbl_coin_total)
+
+        # 버튼 행
+        btn_row = QHBoxLayout()
+        btn_refresh = QPushButton("새로고침")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.setStyleSheet(
+            "QPushButton { background:#1565C0; color:white; border-radius:6px; font-size:13px; }"
+            "QPushButton:pressed { background:#0D47A1; }"
+        )
+        btn_refresh.clicked.connect(self._refresh_coin_status)
+
+        btn_collect = QPushButton(f"수금  (각 단위 {MIN_RESERVE}개 유지)")
+        btn_collect.setFixedHeight(36)
+        btn_collect.setStyleSheet(
+            "QPushButton { background:#E53935; color:white; border-radius:6px; font-size:13px; }"
+            "QPushButton:pressed { background:#B71C1C; }"
+        )
+        btn_collect.clicked.connect(self._on_coin_collect)
+
+        btn_row.addWidget(btn_refresh)
+        btn_row.addWidget(btn_collect)
+        layout.addLayout(btn_row)
+
+        self._refresh_coin_status()
+        return w
+
+    def _refresh_coin_status(self):
+        status = self.reserve.status()
+        rows   = sorted(status.items(), reverse=True)   # 500 → 100 → 50 → 10 → (1000 마지막)
+        rows   = [(u, c) for u, c in rows if u != 1000] + \
+                 [(1000, status.get(1000, 0))]           # 1000원 맨 아래
+
+        self._coin_table.setRowCount(len(rows))
+        for r, (unit, count) in enumerate(rows):
+            self._coin_table.setItem(r, 0, QTableWidgetItem(f"{unit:,}"))
+            self._coin_table.setItem(r, 1, QTableWidgetItem(str(count)))
+            self._coin_table.setItem(r, 2, QTableWidgetItem(f"{unit * count:,}"))
+            for c in range(3):
+                self._coin_table.item(r, c).setTextAlignment(Qt.AlignCenter)
+
+        self._lbl_coin_total.setText(f"합계:  {self.reserve.total_amount():,} 원")
+
+    def _on_coin_collect(self):
+        preview = self.reserve.total_amount()
+        if preview == 0:
+            QMessageBox.information(self, "수금", "수금할 금액이 없습니다.")
+            return
+        collected = self.reserve.collect()
+        self._refresh_coin_status()
+        QMessageBox.information(
+            self, "수금 완료",
+            f"{collected:,} 원을 수금했습니다.\n(각 단위 {MIN_RESERVE}개 유지)"
+        )
+
+    # ── 탭 6: 비밀번호 변경 ───────────────────────
     def _build_password_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
