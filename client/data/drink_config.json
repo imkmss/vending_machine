@@ -1,0 +1,42 @@
+[
+  {
+    "drink_id": 1,
+    "name": "믹스커피",
+    "price": 200
+  },
+  {
+    "drink_id": 2,
+    "name": "고급믹스커피",
+    "price": 300
+  },
+  {
+    "drink_id": 3,
+    "name": "삼다수",
+    "price": 450
+  },
+  {
+    "drink_id": 4,
+    "name": "캔커피",
+    "price": 500
+  },
+  {
+    "drink_id": 5,
+    "name": "이온음료",
+    "price": 550
+  },
+  {
+    "drink_id": 6,
+    "name": "고급캔커피",
+    "price": 700
+  },
+  {
+    "drink_id": 7,
+    "name": "탄산음료",
+    "price": 750
+  },
+  {
+    "drink_id": 8,
+    "name": "특화음료",
+    "price": 800
+  }
+]

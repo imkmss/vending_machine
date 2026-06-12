@@ -1,6 +1,8 @@
+"""판매·재고보충·수금·재고소진 이력을 CSV 파일로 읽기/쓰기한다."""
 from __future__ import annotations
 
 import csv
+import json
 import os
 from datetime import date
 
@@ -110,6 +112,61 @@ def load_collections(path: str = COLLECTION_PATH) -> list[dict]:
         return []
     with open(path, "r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+EXHAUSTION_PATH   = os.path.join(os.path.dirname(__file__), "stock_exhaustion_log.csv")
+EXHAUSTION_FIELDS = ["date", "client_id", "drink_id", "drink_name"]
+
+
+def append_stock_exhaustion(
+    date_str:   str,
+    client_id:  str,
+    drink_id:   int,
+    drink_name: str,
+    path:       str = EXHAUSTION_PATH,
+):
+    """음료 재고가 0이 되는 순간 날짜를 기록."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=EXHAUSTION_FIELDS).writeheader()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=EXHAUSTION_FIELDS).writerow({
+            "date": date_str, "client_id": client_id,
+            "drink_id": drink_id, "drink_name": drink_name,
+        })
+
+
+def load_stock_exhaustions(path: str = EXHAUSTION_PATH) -> list[dict]:
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+_DRINK_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "drink_config.json")
+
+
+def save_drink_config(inventory) -> None:
+    """음료 이름·가격 변경 사항을 JSON 파일에 저장."""
+    data = [{"drink_id": n["drink_id"], "name": n["name"], "price": n["price"]}
+            for n in inventory.to_list()]
+    with open(_DRINK_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_drink_config(inventory) -> None:
+    """저장된 음료 이름·가격을 Inventory에 적용. 파일 없으면 기본값 유지."""
+    if not os.path.exists(_DRINK_CONFIG_PATH):
+        return
+    with open(_DRINK_CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    for item in data:
+        drink_id = item.get("drink_id")
+        if drink_id:
+            if item.get("name"):
+                inventory.rename(drink_id, item["name"])
+            if item.get("price"):
+                inventory.reprice(drink_id, item["price"])
 
 
 def get_daily_total(client_id: str, date_str: str, path: str = DEFAULT_PATH) -> int:

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>자판기 관리 대시보드</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a237e; color: white;
+      padding: 16px 32px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 1.3rem; }
+    header .subtitle { font-size: 0.85rem; opacity: 0.75; }
+
+    .toolbar {
+      background: white; padding: 12px 32px;
+      display: flex; align-items: center; gap: 12px;
+      border-bottom: 1px solid #ddd;
+    }
+    .toolbar label { font-weight: 600; font-size: 0.9rem; }
+    .toolbar select {
+      padding: 6px 12px; border: 1px solid #bbb;
+      border-radius: 6px; font-size: 0.9rem; cursor: pointer;
+    }
+    .toolbar button {
+      padding: 6px 18px; background: #1a237e; color: white;
+      border: none; border-radius: 6px; font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .toolbar button:hover { background: #283593; }
+    #status { font-size: 0.8rem; color: #888; margin-left: auto; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      padding: 24px 32px;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: white; border-radius: 10px;
+      padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    .card h2 {
+      font-size: 1rem; font-weight: 700;
+      margin-bottom: 16px; color: #1a237e;
+      border-left: 4px solid #1a237e; padding-left: 10px;
+    }
+    .card.wide { grid-column: 1 / -1; }
+
+    canvas { max-height: 260px; }
+
+    /* 재고 테이블 */
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th { background: #e8eaf6; padding: 8px 12px; text-align: left; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 10px; font-size: 0.78rem; font-weight: 600;
+    }
+    .badge-ok      { background: #e8f5e9; color: #2e7d32; }
+    .badge-low     { background: #fff3e0; color: #e65100; }
+    .badge-empty   { background: #ffebee; color: #c62828; }
+
+    .no-data {
+      text-align: center; padding: 40px;
+      color: #aaa; font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="subtitle">Vending Machine Management</div>
+    <h1>자판기 관리 대시보드</h1>
+  </div>
+</header>
+
+<div class="toolbar">
+  <label for="vmSelect">자판기</label>
+  <select id="vmSelect">
+    {% if clients %}
+      {% for c in clients %}
+        <option value="{{ c }}">{{ c }}</option>
+      {% endfor %}
+    {% else %}
+      <option value="">연결된 자판기 없음</option>
+    {% endif %}
+  </select>
+  <button onclick="loadAll()">조회</button>
+  <span id="status"></span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>월별 매출 (최근 6개월)</h2>
+    <canvas id="monthlyChart"></canvas>
+    <div id="monthlyEmpty" class="no-data" style="display:none">데이터 없음</div>
+  </div>
+
+  <div class="card">
+    <h2>일별 매출 (최근 14일)</h2>
+    <canvas id="dailyChart"></canvas>
+    <div id="dailyEmpty" class="no-data" style="display:none">데이터 없음</div>
+  </div>
+
+  <div class="card">
+    <h2>음료별 판매 비중 (올해)</h2>
+    <canvas id="pieChart"></canvas>
+    <div id="pieEmpty" class="no-data" style="display:none">데이터 없음</div>
+  </div>
+
+  <div class="card">
+    <h2>음료별 매출 상세 (올해)</h2>
+    <canvas id="breakdownChart"></canvas>
+    <div id="breakdownEmpty" class="no-data" style="display:none">데이터 없음</div>
+  </div>
+
+  <div class="card wide">
+    <h2>현재 재고 현황</h2>
+    <div id="inventoryArea"><div class="no-data">조회 버튼을 눌러주세요.</div></div>
+  </div>
+</div>
+
+<script>
+const COLORS = [
+  '#3f51b5','#e91e63','#ff9800','#4caf50',
+  '#9c27b0','#00bcd4','#f44336','#8bc34a',
+];
+
+let charts = {};
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function showEmpty(id, show) {
+  const canvas = document.getElementById(id);
+  const empty  = document.getElementById(id.replace('Chart','Empty'));
+  if (canvas) canvas.style.display = show ? 'none' : 'block';
+  if (empty)  empty.style.display  = show ? 'block' : 'none';
+}
+
+function makeBar(id, labels, values, label, color) {
+  destroyChart(id);
+  const empty = values.every(v => v === 0);
+  showEmpty(id, empty);
+  if (empty) return;
+
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label, data: values, backgroundColor: color, borderRadius: 4 }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { callback: v => v.toLocaleString() + '원' },
+        },
+      },
+    },
+  });
+}
+
+function makePie(id, labels, values) {
+  destroyChart(id);
+  const total = values.reduce((a,b) => a+b, 0);
+  showEmpty(id, total === 0);
+  if (total === 0) return;
+
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: COLORS }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'right', labels: { font: { size: 12 } } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${ctx.parsed}개 (${Math.round(ctx.parsed/total*100)}%)`,
+          },
+        },
+      },
+    },
+  });
+}
+
+function makeHBar(id, labels, values, label) {
+  destroyChart(id);
+  const total = values.reduce((a,b) => a+b, 0);
+  showEmpty(id, total === 0);
+  if (total === 0) return;
+
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label,
+        data: values,
+        backgroundColor: COLORS.slice(0, labels.length),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { callback: v => v.toLocaleString() + '원' },
+        },
+      },
+    },
+  });
+}
+
+function renderInventory(data) {
+  const area = document.getElementById('inventoryArea');
+  if (!data || data.length === 0) {
+    area.innerHTML = '<div class="no-data">재고 데이터 없음 (판매 후 갱신됩니다)</div>';
+    return;
+  }
+  const rows = data.map(item => {
+    const s = item.stock ?? 0;
+    let badge = `<span class="badge badge-ok">${s}개</span>`;
+    if (s === 0) badge = `<span class="badge badge-empty">품절</span>`;
+    else if (s <= 3) badge = `<span class="badge badge-low">${s}개 (부족)</span>`;
+    return `<tr>
+      <td>${item.drink_id ?? '-'}</td>
+      <td>${item.name ?? '-'}</td>
+      <td>${(item.price ?? 0).toLocaleString()}원</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join('');
+
+  area.innerHTML = `
+    <table>
+      <thead><tr><th>ID</th><th>음료명</th><th>가격</th><th>재고</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function loadAll() {
+  const vm = document.getElementById('vmSelect').value;
+  if (!vm) return;
+  document.getElementById('status').textContent = '불러오는 중...';
+
+  try {
+    const [monthly, daily, breakdown, inventory] = await Promise.all([
+      fetch(`/api/monthly?client_id=${vm}`).then(r => r.json()),
+      fetch(`/api/daily?client_id=${vm}`).then(r => r.json()),
+      fetch(`/api/breakdown?client_id=${vm}`).then(r => r.json()),
+      fetch(`/api/inventory?client_id=${vm}`).then(r => r.json()),
+    ]);
+
+    makeBar('monthlyChart', monthly.labels, monthly.values, '월별 매출', '#3f51b5');
+    makeBar('dailyChart',   daily.labels,   daily.values,   '일별 매출', '#00897b');
+    makePie('pieChart',     breakdown.labels, breakdown.counts);
+    makeHBar('breakdownChart', breakdown.labels, breakdown.amounts, '음료별 매출액');
+    renderInventory(inventory);
+
+    const now = new Date().toLocaleTimeString('ko-KR');
+    document.getElementById('status').textContent = `마지막 조회: ${now}`;
+  } catch(e) {
+    document.getElementById('status').textContent = '오류: ' + e.message;
+  }
+}
+
+// 페이지 로드 시 자판기 목록 갱신 후 자동 조회
+async function init() {
+  const res  = await fetch('/api/clients').then(r => r.json());
+  const sel  = document.getElementById('vmSelect');
+  sel.innerHTML = '';
+  if (res.length === 0) {
+    sel.innerHTML = '<option value="">연결된 자판기 없음</option>';
+    return;
+  }
+  res.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    sel.appendChild(opt);
+  });
+  loadAll();
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>

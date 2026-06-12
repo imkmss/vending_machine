@@ -1,3 +1,4 @@
+"""Socket 프로그래밍으로 자판기 판매 데이터를 서버에 전송한다. 멀티 스레드로 송신·Heartbeat를 처리한다."""
 from __future__ import annotations
 
 import json

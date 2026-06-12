@@ -1,3 +1,4 @@
+"""화폐 투입·음료 선택·거스름돈 반환 등 판매 처리와 서버 전송 Queue를 관리한다."""
 from __future__ import annotations
 
 from collections import deque
@@ -12,6 +13,7 @@ from client.core.coin_manager import (
     init_coin, insert_coin, get_inserted_coins, release_coin,
     OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT,
 )
+from client.data.file_manager import append_stock_exhaustion
 
 
 # ──────────────────────────────────────────────
@@ -32,7 +34,7 @@ class SaleRecord:
 # 서버 전송 대기열 (Queue)
 # ──────────────────────────────────────────────
 class SendQueue:
-    """판매 확정 → enqueue → 전송 스레드 dequeue → TCP 전송."""
+    """판매 레코드를 서버로 전송하기 위한 Queue 자료구조."""
 
     MAX_RETRIES = 3
 
@@ -67,10 +69,7 @@ class SendQueue:
 # 자판기 트랜잭션 관리자
 # ──────────────────────────────────────────────
 class VendingSession:
-    """
-    단일 자판기의 한 거래 세션.
-    화폐 투입 → 음료 선택 → 거스름돈 반환 / 취소 흐름을 관리.
-    """
+    """자판기 1회 이용 세션: 화폐 투입부터 음료 배출·거스름돈 반환까지 처리한다."""
 
     def __init__(self, client_id: str, inventory: Inventory, send_queue: SendQueue,
                  reserve: ChangeReserve | None = None):
@@ -127,6 +126,15 @@ class VendingSession:
 
         # 재고 차감
         self.inventory.sell(drink_id)
+
+        # 재고 소진 시 날짜 기록
+        if node.stock == 0:
+            append_stock_exhaustion(
+                date_str=datetime.date.today().isoformat(),
+                client_id=self.client_id,
+                drink_id=node.drink_id,
+                drink_name=node.name,
+            )
 
         # 투입 동전 → 보유고 편입 후 거스름돈 지급
         self.reserve.accept_coins(self._coin)

@@ -1,3 +1,4 @@
+"""관리자 비밀번호 설정·검증을 처리한다. 비밀번호는 SHA-256 해시로 파일에 저장된다."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +14,7 @@ def _hash(pw: str) -> str:
 
 
 def validate_format(pw: str) -> tuple[bool, str]:
-    """형식 검증. (True, '') 또는 (False, 오류메시지) 반환."""
+    """비밀번호 형식 검증: 8자리 이상, 숫자·특수문자 각 1개 이상 필수."""
     if len(pw) < 8:
         return False, "8자리 이상이어야 합니다."
     if not re.search(r"\d", pw):

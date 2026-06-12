@@ -1,3 +1,4 @@
+"""자판기 판매 화면 GUI: 음료 선택·화폐 투입·거스름돈 반환을 처리한다."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,9 +16,9 @@ from PyQt5.QtGui import QColor, QFont, QPixmap, QPainter, QPainterPath
 _IMAGES_DIR = Path(__file__).parent.parent / "images"
 
 
-def _load_pixmap(name: str) -> QPixmap | None:
-    for ext in ("png", "jpg", "jpeg"):
-        p = _IMAGES_DIR / f"{name}.{ext}"
+def _load_pixmap(drink_id: int) -> QPixmap | None:
+    for ext in ("jpg", "jpeg", "png"):
+        p = _IMAGES_DIR / f"{drink_id}.{ext}"
         if p.exists():
             return QPixmap(str(p))
     return None
@@ -25,7 +26,7 @@ def _load_pixmap(name: str) -> QPixmap | None:
 from client.core.beverage import Inventory
 from client.core.transaction import SendQueue, VendingSession
 from client.core.coin_manager import OK, INVALID_UNIT, BILL_LIMIT, TOTAL_LIMIT, ChangeReserve
-from client.data.file_manager import append_sale, get_daily_total
+from client.data.file_manager import append_sale, get_daily_total, load_drink_config
 
 _INSERT_MSG = {
     INVALID_UNIT: "사용할 수 없는 화폐 단위입니다.",
@@ -53,7 +54,7 @@ class DrinkButton(QFrame):
         self._name         = name
         self._price        = price
         self._enabled_flag = True
-        self._pixmap       = _load_pixmap(name)
+        self._pixmap       = _load_pixmap(drink_id)
         self._scaled       = None
 
         self._bg_color   = self._BG_NORMAL
@@ -157,7 +158,7 @@ class DrinkButton(QFrame):
 
 
 class SalesWindow(QMainWindow):
-    """고객용 자판기 화면 — 3:4 비율 (600×800)."""
+    """자판기 판매 화면: 관리자 메뉴 활성화 시 입력이 비활성화된다."""
 
     _command_signal = pyqtSignal(object)  # 백그라운드 스레드 → 메인 스레드 안전 전달
 
@@ -169,6 +170,7 @@ class SalesWindow(QMainWindow):
         self.setFixedSize(450, 595)
 
         self.inventory  = Inventory()
+        load_drink_config(self.inventory)
         self.send_queue = SendQueue()
         self.reserve    = ChangeReserve()   # 자판기별 독립 잔돈 보유고
         self.session    = VendingSession(client_id, self.inventory, self.send_queue, self.reserve)
@@ -196,12 +198,19 @@ class SalesWindow(QMainWindow):
 
     def _on_command(self, payload: dict):
         """서버 COMMAND 수신 처리 (메인 스레드에서 실행)."""
-        if payload.get("action") == "low_stock":
+        action = payload.get("action")
+        if action == "low_stock":
             name  = payload.get("name", "")
             stock = payload.get("stock", 0)
             prev  = self._txt_change.toPlainText().strip()
             msg   = f"[재고 부족] {name}: {stock}개 남음"
             self._txt_change.setPlainText(f"{prev}\n{msg}" if prev else msg)
+        elif action == "rename":
+            drink_id = payload.get("drink_id")
+            new_name = payload.get("new_name", "")
+            if drink_id and new_name:
+                self.inventory.rename(drink_id, new_name)
+                self._refresh_drinks()
 
     # ── UI 구성 ───────────────────────────────
     def _init_ui(self):
@@ -353,6 +362,7 @@ class SalesWindow(QMainWindow):
             did   = node["drink_id"]
             btn   = self._drink_btns[did]
             price = node["price"]
+            btn._price = price  # 가격 변경 즉시 반영
             if node["stock"] == 0:
                 btn.set_soldout(node["name"])
             elif did in available and self.reserve.can_make_change(total - price):

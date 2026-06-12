@@ -68,24 +68,36 @@ def main():
             "관리자 모드가 활성화됩니다.\n자판기 운영이 잠시 중단됩니다.",
         )
         from client.core.beverage import Inventory
+        from client.data.file_manager import load_drink_config
         inventory = Inventory()
+        load_drink_config(inventory)
         admin = AdminWindow(inventory=inventory, client_id=client_id)
         admin.show()
     else:  # all
         sales = SalesWindow(client_id=client_id,
                             server_host=server_host, server_port=server_port)
         sales.show()
-        if not _require_password():
-            sys.exit(0)
-        QMessageBox.warning(
-            None, "관리자 모드 활성화",
-            "관리자 모드가 활성화됩니다.\n자판기 운영이 잠시 중단됩니다.",
-        )
-        sales.setEnabled(False)
-        admin = AdminWindow(inventory=sales.inventory, client_id=client_id,
-                            reserve=sales.reserve)
-        admin.closed.connect(lambda: sales.setEnabled(True))
-        admin.show()
+
+        initialize_default()
+        dlg = PasswordDialog()
+        sales._pw_dlg = dlg  # GC 방지용 참조 유지
+
+        def _on_auth_accepted():
+            QMessageBox.warning(
+                None, "관리자 모드 활성화",
+                "관리자 모드가 활성화됩니다.\n자판기 운영이 잠시 중단됩니다.",
+            )
+            sales.setEnabled(False)
+            admin = AdminWindow(inventory=sales.inventory, client_id=client_id,
+                                reserve=sales.reserve)
+            admin.closed.connect(lambda: sales.setEnabled(True))
+            admin.inventory_changed.connect(sales._refresh_drinks)
+            admin.show()
+
+        dlg.accepted.connect(_on_auth_accepted)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     sys.exit(app.exec_())
 

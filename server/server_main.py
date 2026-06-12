@@ -11,8 +11,9 @@ import logging
 import socket
 
 from server.server_db import SalesDataStore
-from server.server_handler import ClientHandler
+from server.server_handler import ClientHandler, ClientRegistry
 from server.sync_manager import SyncManager
+from server.web_server import start_web_server
 
 HOST = "0.0.0.0"
 PORT = 9999
@@ -27,15 +28,19 @@ class VendingServer:
         self,
         host:         str           = HOST,
         port:         int           = PORT,
-        data_store:   SalesDataStore | None = None,
-        sync_manager: SyncManager   | None = None,
+        data_store:   SalesDataStore  | None = None,
+        sync_manager: SyncManager    | None = None,
+        registry:     ClientRegistry | None = None,
     ):
         self.host         = host
         self.port         = port
         self.data_store   = data_store or SalesDataStore()
         self.sync_manager = sync_manager
+        self.registry     = registry or ClientRegistry()
 
-    def start(self):
+    def start(self, web_port: int = 8080):
+        start_web_server(self.data_store, port=web_port)
+
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind((self.host, self.port))
@@ -48,7 +53,7 @@ class VendingServer:
                 conn, addr = server_sock.accept()
                 print(f"[서버] 클라이언트 연결: {addr}")
                 logger.info("클라이언트 연결: %s", addr)
-                ClientHandler(conn, addr, self.data_store, self.sync_manager).start()
+                ClientHandler(conn, addr, self.data_store, self.sync_manager, self.registry).start()
         except KeyboardInterrupt:
             print("\n[서버] 종료")
         finally:
@@ -59,6 +64,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="자판기 TCP 서버")
     parser.add_argument("--host",           default=HOST)
     parser.add_argument("--port",           type=int, default=PORT)
+    parser.add_argument("--web-port",       type=int, default=8080,
+                        help="웹 대시보드 포트 (기본 8080)")
     parser.add_argument("--sync-port",      type=int, default=None,
                         help="이 서버의 동기화 수신 포트 (e.g. 10000)")
     parser.add_argument("--peer-host",      default=None,
@@ -89,4 +96,4 @@ if __name__ == "__main__":
         port=args.port,
         data_store=data_store,
         sync_manager=sync_manager,
-    ).start()
+    ).start(web_port=args.web_port)
