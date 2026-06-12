@@ -122,7 +122,8 @@ class VendingClient:
         self.on_command    = on_command
 
         self._sock: socket.socket | None = None
-        self._lock = threading.Lock()           # 소켓 send 직렬화
+        self._lock      = threading.Lock()      # 소켓 send 직렬화
+        self._recv_lock = threading.Lock()      # 소켓 recv 직렬화
         self._connected   = False
         self._running     = False
         self._last_hb_ack = time.time()         # 마지막 ACK 수신 시각
@@ -202,18 +203,20 @@ class VendingClient:
         """
         ACK(0x03) 수신 대기. COMMAND(0x06)가 먼저 오면 콜백 처리 후 계속 대기.
         ACK_TIMEOUT 초 안에 ACK 수신 못 하면 False.
+        recv_lock으로 heartbeat 스레드와 sender 스레드의 동시 수신을 직렬화.
         """
-        deadline = time.time() + ACK_TIMEOUT
-        while time.time() < deadline:
-            self._sock.settimeout(max(0.1, deadline - time.time()))
-            msg = self._recv_message()
-            if msg is None:
-                return False
-            if msg["type"] == MsgType.ACK:
-                self._last_hb_ack = time.time()
-                return True
-            if msg["type"] == MsgType.COMMAND and self.on_command:
-                self.on_command(msg["payload"])
+        with self._recv_lock:
+            deadline = time.time() + ACK_TIMEOUT
+            while time.time() < deadline:
+                self._sock.settimeout(max(0.1, deadline - time.time()))
+                msg = self._recv_message()
+                if msg is None:
+                    return False
+                if msg["type"] == MsgType.ACK:
+                    self._last_hb_ack = time.time()
+                    return True
+                if msg["type"] == MsgType.COMMAND and self.on_command:
+                    self.on_command(msg["payload"])
         return False
 
     # ── 판매 데이터 전송 ───────────────────────
@@ -263,12 +266,13 @@ class VendingClient:
                 time.sleep(0.1)
 
     def _heartbeat_loop(self):
-        """30초마다 HEARTBEAT 전송. 90초 무응답 시 재연결."""
+        """30초마다 HEARTBEAT 전송 후 ACK 수신. 90초 무응답 시 재연결."""
         while self._running:
             time.sleep(HEARTBEAT_SEC)
             if not self._connected:
                 continue
             self.send_heartbeat()
+            self._wait_ack()   # ACK 수신 → _last_hb_ack 갱신
             if time.time() - self._last_hb_ack > HB_TIMEOUT:
                 logger.warning("[%s] Heartbeat 타임아웃 — 재연결", self.client_id)
                 self._reconnect()
