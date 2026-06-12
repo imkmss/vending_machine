@@ -6,3 +6,4 @@ client/data/sales_log.csv
 client/data/admin_auth.txt
 client/data/restock_log.csv
 client/data/collection_log.csv
+client/data/stock_exhaustion_log.csv

@@ -15,6 +15,14 @@
 
 ---
 
+## 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+> Python 3.9 이상 필요
+
 ## 실행 방법
 
 ```bash
