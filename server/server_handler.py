@@ -122,7 +122,12 @@ class ClientHandler(threading.Thread):
             client_id, date, drink_name or "?", price,
         )
         if self.sync_manager:
-            self.sync_manager.push(client_id, date, price)
+            self.sync_manager.push(
+                client_id, date, price,
+                drink_name=sold_drink.get("name", ""),
+                drink_price=sold_drink.get("price", 0),
+                inventory=inventory,
+            )
 
         self._send(MsgType.ACK)
 

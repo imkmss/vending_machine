@@ -78,10 +78,19 @@ class SyncManager:
         self._running = False
 
     # ── 외부 호출: 판매 데이터 동기화 큐에 추가 ─────────────────────────
-    def push(self, client_id: str, date_str: str, price: int) -> None:
+    def push(self, client_id: str, date_str: str, price: int,
+             drink_name: str = "", drink_price: int = 0,
+             inventory: list | None = None) -> None:
         """클라이언트 SALE 처리 후 피어로 보낼 항목을 큐에 적재."""
         with self._queue_lock:
-            self._queue.append({"client_id": client_id, "date": date_str, "price": price})
+            self._queue.append({
+                "client_id":   client_id,
+                "date":        date_str,
+                "price":       price,
+                "drink_name":  drink_name,
+                "drink_price": drink_price,
+                "inventory":   inventory or [],
+            })
 
     # ── 수신 루프 ───────────────────────────────────────────────────────
     def _listener_loop(self) -> None:
@@ -119,11 +128,17 @@ class SyncManager:
                 if header["type"] == SYNC:
                     data = json.loads(payload_bytes)
                     self.data_store.record_sale(
-                        data["client_id"], data["date"], data["price"]
+                        data["client_id"], data["date"], data["price"],
+                        drink_name=data.get("drink_name", ""),
+                        drink_price=data.get("drink_price", 0),
                     )
+                    inventory = data.get("inventory", [])
+                    if inventory:
+                        self.data_store.update_inventory(data["client_id"], inventory)
                     logger.info(
-                        "%s 수신 저장: %s %s %d원",
+                        "%s 수신 저장: %s %s %d원 (%s)",
                         self._tag, data["client_id"], data["date"], data["price"],
+                        data.get("drink_name", "?"),
                     )
                     conn.sendall(_build_message(SYNC_ACK, 0))
                 else:
